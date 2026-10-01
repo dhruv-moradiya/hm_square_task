@@ -1,14 +1,30 @@
 import Busboy from "busboy";
+import { Readable } from "node:stream";
 import { Request, Response, NextFunction } from "express";
 import { ApiResponse } from "../../utils/api-response.js";
-import {
-  EXPECTED_CSV_COLUMNS,
-  OrderProcessingSummary,
-} from "./order.schema.js";
+import { logger } from "../../config/logger.js";
+import { EXPECTED_CSV_COLUMNS } from "./order.schema.js";
 import { orderService, OrderService } from "./order.service.js";
 
 const UUID_REGEX =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+const ALLOWED_MIME_TYPES = new Set([
+  "text/csv",
+  "text/plain",
+  "application/csv",
+  "application/x-csv",
+  "text/x-csv",
+  "text/comma-separated-values",
+  "application/vnd.ms-excel",
+  "application/octet-stream",
+]);
+
+interface MultipartFilePayload {
+  fileStream: Readable;
+  filename: string;
+  mimeType?: string;
+}
 
 export class OrderController {
   private readonly orderService: OrderService;
@@ -20,147 +36,149 @@ export class OrderController {
   public uploadOrders = async (
     req: Request,
     res: Response,
-    next: NextFunction,
+    _next: NextFunction,
   ): Promise<void> => {
-    const contentType = req.headers["content-type"];
-    if (!contentType || !contentType.includes("multipart/form-data")) {
-      ApiResponse.error(
-        res,
-        "Invalid Content-Type. Expected multipart/form-data.",
-        400,
-      );
-      return;
-    }
-
-    let fileFound = false;
-    let responseSent = false;
-    let processingPromise: Promise<OrderProcessingSummary> | null = null;
+    const requestId =
+      (req as any).id ||
+      (req.headers["x-request-id"] as string) ||
+      "req-unknown";
+    const uploadStartTime = Date.now();
 
     try {
+      const { fileStream, filename, mimeType } =
+        await this.parseMultipartUpload(req, requestId);
+
+      const summary = await this.orderService.ingestOrdersFile(fileStream, {
+        filename,
+        mimeType,
+        requestId,
+      });
+
+      const durationMs = Date.now() - uploadStartTime;
+      logger.info(
+        {
+          requestId,
+          filename,
+          totalRows: summary.totalRows,
+          validRows: summary.validRows,
+          invalidRows: summary.invalidRows,
+          insertedRows: summary.insertedRows,
+          duplicateRows: summary.duplicateRows,
+          gcs_uploaded: summary.gcs_uploaded,
+          durationMs,
+        },
+        "upload completed",
+      );
+
+      ApiResponse.success(res, summary, 200);
+    } catch (err: any) {
+      this.handleUploadError(res, err, requestId);
+    }
+  };
+
+  private parseMultipartUpload(
+    req: Request,
+    requestId: string,
+  ): Promise<MultipartFilePayload> {
+    return new Promise((resolve, reject) => {
+      const contentType = req.headers["content-type"];
+      if (!contentType || !contentType.includes("multipart/form-data")) {
+        return reject({
+          statusCode: 400,
+          message: "Invalid Content-Type. Expected multipart/form-data.",
+        });
+      }
+
+      let fileFound = false;
+      let payload: MultipartFilePayload | null = null;
+
       const bb = Busboy({
         headers: req.headers,
-        limits: {
-          files: 1,
-        },
+        limits: { files: 1 },
       });
 
       bb.on("file", (fieldname, fileStream, info) => {
-        const { filename, mimeType } = info;
         fileFound = true;
+        const { filename, mimeType } = info;
 
-        // 1. Validate file field name
         if (fieldname !== "file") {
           fileStream.resume();
-          if (!responseSent) {
-            responseSent = true;
-            ApiResponse.error(
-              res,
-              `Invalid file field name "${fieldname}". The field name must be "file".`,
-              400,
-            );
-          }
-          return;
+          return reject({
+            statusCode: 400,
+            message: `Invalid file field name "${fieldname}". The field name must be "file".`,
+          });
         }
 
-        // 2. Validate file extension
-        const lowerFilename = filename.toLowerCase();
-        if (!lowerFilename.endsWith(".csv")) {
+        if (!filename.toLowerCase().endsWith(".csv")) {
           fileStream.resume();
-          if (!responseSent) {
-            responseSent = true;
-            ApiResponse.error(res, "Only CSV files are allowed", 400, {
-              receivedFile: filename,
-            });
-          }
-          return;
+          return reject({
+            statusCode: 400,
+            message: "Only CSV files are allowed",
+            details: { receivedFile: filename },
+          });
         }
 
-        // 3. Validate MIME type where possible
-        const allowedMimeTypes = [
-          "text/csv",
-          "text/plain",
-          "application/csv",
-          "application/x-csv",
-          "text/x-csv",
-          "text/comma-separated-values",
-          "application/vnd.ms-excel",
-          "application/octet-stream",
-        ];
-
-        if (mimeType && !allowedMimeTypes.includes(mimeType.toLowerCase())) {
+        if (mimeType && !ALLOWED_MIME_TYPES.has(mimeType.toLowerCase())) {
           fileStream.resume();
-          if (!responseSent) {
-            responseSent = true;
-            ApiResponse.error(
-              res,
-              "Only CSV files are allowed (invalid MIME type)",
-              400,
-              { receivedMimeType: mimeType },
-            );
-          }
-          return;
+          return reject({
+            statusCode: 400,
+            message: "Only CSV files are allowed (invalid MIME type)",
+            details: { receivedMimeType: mimeType },
+          });
         }
 
-        // 4. Stream file directly into OrderService
-        processingPromise =
-          this.orderService.processOrdersCsvStream(fileStream);
+        logger.info({ requestId, filename }, "upload started");
+        payload = { fileStream, filename, mimeType };
+        resolve(payload);
       });
 
-      bb.on("finish", async () => {
-        if (responseSent) return;
-
-        if (!fileFound || !processingPromise) {
-          responseSent = true;
-          ApiResponse.error(
-            res,
-            "No file provided. Please attach a CSV file under the field 'file'.",
-            400,
-          );
-          return;
-        }
-
-        try {
-          const summary = await processingPromise;
-          responseSent = true;
-          ApiResponse.success(res, summary, 200);
-        } catch (err: any) {
-          responseSent = true;
-          const errorMessage = err?.message || "Error processing CSV file";
-
-          if (
-            errorMessage.includes("column") ||
-            errorMessage.includes("header") ||
-            errorMessage.includes("CSV")
-          ) {
-            ApiResponse.error(res, "Invalid CSV header", 400, {
-              details: errorMessage,
-              expectedColumns: EXPECTED_CSV_COLUMNS,
-            });
-            return;
-          }
-
-          console.error("CSV Processing Error:", err);
-          ApiResponse.error(res, "Internal Server Error", 500, {
-            message: errorMessage,
+      bb.on("finish", () => {
+        if (!fileFound || !payload) {
+          reject({
+            statusCode: 400,
+            message:
+              "No file provided. Please attach a CSV file under the field 'file'.",
           });
         }
       });
 
       bb.on("error", (err: any) => {
-        if (!responseSent) {
-          responseSent = true;
-          console.error("Busboy Upload Error:", err);
-          ApiResponse.error(res, "Upload Error", 400, {
-            message: err.message || "Failed to process multipart upload",
-          });
-        }
+        reject({
+          statusCode: 400,
+          message: err.message || "Failed to process multipart upload",
+        });
       });
 
       req.pipe(bb);
-    } catch (err) {
-      next(err);
+    });
+  }
+
+  private handleUploadError(res: Response, err: any, requestId: string): void {
+    logger.error({ err, requestId }, "Upload failed");
+
+    if (err?.statusCode) {
+      ApiResponse.error(res, err.message, err.statusCode, err.details);
+      return;
     }
-  };
+
+    const message = err?.message || "Error processing CSV file";
+
+    if (
+      message.includes("Missing required column") ||
+      message.includes("Unexpected extra column") ||
+      message.includes("duplicate column headers") ||
+      message.includes("header is empty or missing") ||
+      message.includes("Invalid CSV header")
+    ) {
+      ApiResponse.error(res, "Invalid CSV header", 400, {
+        details: message,
+        expectedColumns: EXPECTED_CSV_COLUMNS,
+      });
+      return;
+    }
+
+    ApiResponse.error(res, "Internal Server Error", 500, { message });
+  }
 
   public getOrders = async (
     req: Request,

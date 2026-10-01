@@ -1,0 +1,10 @@
+order_id,customer_id,order_date,order_amount,status
+813c825a-e309-470b-95f6-55d7b65e8638,CUST_001,2026-10-01T10:00:00Z,499.99,completed
+invalid-uuid-format,CUST_002,2026-10-01T10:00:00Z,299.50,pending
+30bc2507-f0bb-47e6-9150-86373da223f3,,2026-10-01T10:00:00Z,150.00,completed
+aaa17b03-4d18-4d43-bdfa-e3a9670495ea,CUST_004,invalid-date-string,199.99,completed
+ac09f06e-e203-40a1-9d69-42583f624938,CUST_005,2026-10-01T10:00:00Z,-50.00,completed
+52b2edac-9363-45a6-8962-c893aeec436d,CUST_006,2026-10-01T10:00:00Z,abc,completed
+2ebb2b98-64d1-4dab-a4a7-800e4e8c3b1d,CUST_007,2026-10-01T10:00:00Z,99.99,
+0516afe4-14b3-4077-abfb-f28ca5e71617,CUST_008,2026-10-01T11:00:00Z,350.00,completed
+b99afffb-6bc4-4576-b346-568d223fac3f,CUST_009,2026-10-01T12:00:00Z,125.75,shipped

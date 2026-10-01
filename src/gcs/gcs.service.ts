@@ -1,8 +1,9 @@
 import { Storage, Bucket } from "@google-cloud/storage";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { Readable, Writable } from "node:stream";
+import { Writable } from "node:stream";
 import { env } from "../config/env.js";
+import { logger } from "../config/logger.js";
 
 export interface GcsUploadResult {
   bucket: string;
@@ -24,6 +25,10 @@ export class GCSService {
       : new Storage();
   }
 
+  public isConfigured(): boolean {
+    return Boolean(this.bucketName && this.bucketName.trim().length > 0);
+  }
+
   public getBucket(): Bucket {
     if (!this.bucketName) {
       throw new Error(
@@ -37,9 +42,9 @@ export class GCSService {
     originalFilename?: string,
     prefix: string = "orders/uploads",
   ): string {
-    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const today = new Date().toISOString().split("T")[0];
     const uniqueId = randomUUID();
-    const ext = originalFilename ? path.extname(originalFilename) : ".txt";
+    const ext = originalFilename ? path.extname(originalFilename) : ".csv";
     const cleanExt = ext.startsWith(".") ? ext : `.${ext}`;
 
     return `${prefix}/${today}-${uniqueId}${cleanExt}`;
@@ -53,8 +58,9 @@ export class GCSService {
     const bucket = this.getBucket();
     const file = bucket.file(destination);
 
-    console.log(
-      `[GCS] Upload started: ${destination} (${buffer.length} bytes) to bucket "${this.bucketName}"`,
+    logger.info(
+      { destination, sizeBytes: buffer.length, bucket: this.bucketName },
+      "GCS upload started",
     );
 
     try {
@@ -66,7 +72,10 @@ export class GCSService {
         },
       });
 
-      console.log(`[GCS] Upload completed successfully: ${destination}`);
+      logger.info(
+        { destination, bucket: this.bucketName },
+        "GCS upload completed successfully",
+      );
 
       return {
         bucket: this.bucketName,
@@ -75,56 +84,11 @@ export class GCSService {
         contentType,
       };
     } catch (error: any) {
-      console.error(
-        `[GCS] Upload failed for ${destination}:`,
-        error?.message || error,
-      );
+      logger.error({ destination, err: error }, "GCS upload failed");
       throw this.normalizeGcsError(error);
     }
   }
-
-  public async uploadFile(
-    localFilePath: string,
-    destination: string,
-    contentType?: string,
-  ): Promise<GcsUploadResult> {
-    const bucket = this.getBucket();
-
-    console.log(
-      `[GCS] Uploading local file "${localFilePath}" to "${destination}" in bucket "${this.bucketName}"`,
-    );
-
-    try {
-      const uploadOptions: {
-        destination: string;
-        contentType?: string;
-        resumable: boolean;
-      } = {
-        destination,
-        resumable: false,
-      };
-      if (contentType) {
-        uploadOptions.contentType = contentType;
-      }
-
-      await bucket.upload(localFilePath, uploadOptions);
-
-      console.log(`[GCS] File upload completed: ${destination}`);
-
-      return {
-        bucket: this.bucketName,
-        objectPath: destination,
-        contentType: contentType || undefined,
-      };
-    } catch (error: any) {
-      console.error(
-        `[GCS] File upload failed for ${destination}:`,
-        error?.message || error,
-      );
-      throw this.normalizeGcsError(error);
-    }
-  }
-
+  
   public createUploadStream(
     destination: string,
     contentType: string = "text/csv",
@@ -142,7 +106,10 @@ export class GCSService {
 
     const promise = new Promise<GcsUploadResult>((resolve, reject) => {
       writeStream.on("finish", () => {
-        console.log(`[GCS] Stream upload finished: ${destination}`);
+        logger.info(
+          { destination, bucket: this.bucketName },
+          "GCS stream upload finished",
+        );
         resolve({
           bucket: this.bucketName,
           objectPath: destination,
@@ -151,10 +118,7 @@ export class GCSService {
       });
 
       writeStream.on("error", (err) => {
-        console.error(
-          `[GCS] Stream upload error on ${destination}:`,
-          err.message,
-        );
+        logger.error({ destination, err }, "GCS stream upload error");
         reject(this.normalizeGcsError(err));
       });
     });
@@ -167,17 +131,18 @@ export class GCSService {
       const bucket = this.getBucket();
       const [exists] = await bucket.exists();
       if (!exists) {
-        console.warn(
-          `[GCS] Warning: Bucket "${this.bucketName}" does not exist or is not accessible.`,
+        logger.warn(
+          { bucket: this.bucketName },
+          "GCS bucket does not exist or is not accessible",
         );
         return false;
       }
-      console.log(`[GCS] Verified bucket access: "${this.bucketName}"`);
+      logger.info({ bucket: this.bucketName }, "Verified GCS bucket access");
       return true;
     } catch (error: any) {
-      console.error(
-        `[GCS] Failed to verify bucket access:`,
-        error?.message || error,
+      logger.error(
+        { err: error, bucket: this.bucketName },
+        "Failed to verify GCS bucket access",
       );
       return false;
     }

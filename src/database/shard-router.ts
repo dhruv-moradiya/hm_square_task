@@ -10,6 +10,7 @@ export class ShardRouter {
     this.shardCount = shardCount;
   }
 
+  // To get the shard for a customer
   public getShard(customerId: string): number {
     if (
       !customerId ||
@@ -30,6 +31,7 @@ export class ShardRouter {
     return hashInt % this.shardCount;
   }
 
+  // To get the shard count
   public getShardCount(): number {
     return this.shardCount;
   }

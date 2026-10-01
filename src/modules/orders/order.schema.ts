@@ -38,6 +38,7 @@ export interface OrderProcessingSummary {
   insertedRows: number;
   duplicateRows: number;
   errors: RowValidationError[];
+  gcs_uploaded?: boolean;
 }
 
 export interface BatchInsertResult {

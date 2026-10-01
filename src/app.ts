@@ -1,4 +1,5 @@
 import express, { Express, Request, Response, NextFunction } from "express";
+import { httpLogger, logger } from "./config/logger.js";
 import { ApiResponse } from "./utils/api-response.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { orderRouter } from "./routes/order.routes.js";
@@ -6,6 +7,7 @@ import { orderRouter } from "./routes/order.routes.js";
 export function createApp(): Express {
   const app = express();
 
+  app.use(httpLogger);
   app.use(express.json());
 
   app.use("/health", healthRouter);
@@ -18,8 +20,17 @@ export function createApp(): Express {
     });
   });
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("Unhandled server error:", err);
+  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+    const requestId = (req as any).id || req.headers["x-request-id"];
+    logger.error(
+      {
+        err,
+        requestId,
+        method: req.method,
+        url: req.url,
+      },
+      "Unhandled server error",
+    );
     ApiResponse.error(res, "Internal Server Error", err.status || 500, {
       message: err.message || "An unexpected error occurred",
     });
@@ -29,3 +40,4 @@ export function createApp(): Express {
 }
 
 export const app = createApp();
+

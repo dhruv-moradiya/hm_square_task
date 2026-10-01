@@ -1,0 +1,6 @@
+order_id,customer_id,order_date,order_amount,status
+5de35cdd-df98-420b-a938-98ff2be27086,CUST_001,2026-10-01T10:00:00Z,100.00,completed
+5de35cdd-df98-420b-a938-98ff2be27086,CUST_001,2026-10-01T10:00:00Z,100.00,completed
+d2ecb030-b5b0-46ce-983f-f9d27009e99a,CUST_002,2026-10-01T11:00:00Z,200.00,completed
+d2ecb030-b5b0-46ce-983f-f9d27009e99a,CUST_002,2026-10-01T11:00:00Z,200.00,completed
+9aa0b9b7-733b-461e-90ea-d23420e519e6,CUST_003,2026-10-01T12:00:00Z,300.00,completed

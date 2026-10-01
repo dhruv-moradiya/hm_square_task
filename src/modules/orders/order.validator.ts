@@ -14,9 +14,6 @@ export interface ValidationResult {
 }
 
 export class OrderValidator {
-  /**
-   * Validates CSV headers against the expected schema.
-   */
   public static validateHeaders(headers: string[]): {
     isValid: boolean;
     error?: string;
@@ -61,13 +58,10 @@ export class OrderValidator {
     return { isValid: true };
   }
 
-  /**
-   * Validates an individual CSV order row.
-   */
+
   public static validateRow(row: RawCsvOrderRow): ValidationResult {
     const errors: string[] = [];
 
-    // 1. order_id validation (UUID)
     const rawOrderId = row.order_id?.trim();
     if (!rawOrderId) {
       errors.push("order_id is required");

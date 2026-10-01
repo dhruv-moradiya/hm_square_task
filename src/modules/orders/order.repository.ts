@@ -1,5 +1,6 @@
-import pg from "pg";
 import { shardManager, ShardManager } from "../../database/shard-manager.js";
+import { withTransaction } from "../../database/transaction.js";
+import { logger } from "../../config/logger.js";
 import { BatchInsertResult, ValidOrder } from "./order.schema.js";
 
 export class OrderRepository {
@@ -12,75 +13,76 @@ export class OrderRepository {
   public async insertBatchToShard(
     shardId: number,
     orders: ValidOrder[],
+    context: Record<string, any> = {},
   ): Promise<BatchInsertResult> {
     if (orders.length === 0) {
       return { insertedCount: 0, duplicateCount: 0 };
     }
 
     const pool = this.shardManager.getPool(shardId);
-    const client = await pool.connect();
 
-    try {
-      await client.query("BEGIN");
+    return withTransaction(
+      pool,
+      async (client) => {
+        const valueClauses: string[] = [];
+        const queryParams: any[] = [];
 
-      const valueClauses: string[] = [];
-      const queryParams: any[] = [];
+        for (let i = 0; i < orders.length; i++) {
+          const order = orders[i]!;
+          const offset = i * 5;
+          valueClauses.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`,
+          );
+          queryParams.push(
+            order.order_id,
+            order.customer_id,
+            order.order_date,
+            order.order_amount,
+            order.status,
+          );
+        }
 
-      for (let i = 0; i < orders.length; i++) {
-        const order = orders[i]!;
-        const offset = i * 5;
-        valueClauses.push(
-          `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`,
-        );
-        queryParams.push(
-          order.order_id,
-          order.customer_id,
-          order.order_date,
-          order.order_amount,
-          order.status,
-        );
-      }
+        const insertQuery = `
+          INSERT INTO orders (
+            order_id,
+            customer_id,
+            order_date,
+            order_amount,
+            status
+          )
+          VALUES ${valueClauses.join(", ")}
+          ON CONFLICT (order_id) DO NOTHING
+          RETURNING order_id;
+        `;
 
-      const insertQuery = `
-        INSERT INTO orders (
-          order_id,
-          customer_id,
-          order_date,
-          order_amount,
-          status
-        )
-        VALUES ${valueClauses.join(", ")}
-        ON CONFLICT (order_id) DO NOTHING
-        RETURNING order_id;
-      `;
+        const result = await client.query(insertQuery, queryParams);
+        const insertedCount = result.rowCount ?? result.rows.length;
+        const duplicateCount = orders.length - insertedCount;
 
-      const result = await client.query(insertQuery, queryParams);
-      await client.query("COMMIT");
-
-      const insertedCount = result.rowCount ?? result.rows.length;
-      const duplicateCount = orders.length - insertedCount;
-
-      return {
-        insertedCount,
-        duplicateCount,
-      };
-    } catch (error: any) {
-      try {
-        await client.query("ROLLBACK");
-      } catch (rollbackErr: any) {
-        console.error(
-          `[Shard ${shardId}] Transaction rollback error:`,
-          rollbackErr.message,
-        );
-      }
-      console.error(
-        `[Shard ${shardId}] Batch insertion failed for ${orders.length} orders:`,
-        error.message,
+        return {
+          insertedCount,
+          duplicateCount,
+        };
+      },
+      {
+        context: {
+          shardId,
+          rowCount: orders.length,
+          ...context,
+        },
+      },
+    ).catch((err) => {
+      logger.error(
+        {
+          err,
+          shardId,
+          rowCount: orders.length,
+          ...context,
+        },
+        "Batch insertion failed permanently on shard",
       );
-      throw error;
-    } finally {
-      client.release();
-    }
+      throw err;
+    });
   }
 
   public async findOrdersByCustomerId(

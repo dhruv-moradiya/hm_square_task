@@ -1,0 +1,2 @@
+order_id,customer_id,order_date,order_amout,status
+8f63779b-e5de-465f-be02-a6139fb3b0b6,CUST_001,2026-10-01T10:00:00Z,499.99,completed

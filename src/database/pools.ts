@@ -1,5 +1,6 @@
 import pg from "pg";
 import { env, ShardDbConfig } from "../config/env.js";
+import { logger } from "../config/logger.js";
 
 const { Pool } = pg;
 
@@ -27,9 +28,9 @@ export function createShardPools(
     });
 
     pool.on("error", (err) => {
-      console.error(
-        `[Shard ${config.id}] Unexpected error on idle PostgreSQL client:`,
-        err.message,
+      logger.error(
+        { shardId: config.id, err },
+        `Unexpected error on idle PostgreSQL client on shard ${config.id}`,
       );
     });
 

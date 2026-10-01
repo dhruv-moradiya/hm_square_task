@@ -1,4 +1,5 @@
 import pg from "pg";
+import { logger } from "../config/logger.js";
 import { ShardRouter, shardRouter as defaultRouter } from "./shard-router.js";
 import { ShardPoolEntry, shardPools as defaultPools } from "./pools.js";
 
@@ -23,10 +24,6 @@ export class ShardManager {
     this.router = router;
   }
 
-  /**
-   * Retrieves the PostgreSQL Pool for a specific shard index.
-   * @param shardId - Shard number (0, 1, 2)
-   */
   public getPool(shardId: number): pg.Pool {
     const entry = this.pools.get(shardId);
     if (!entry) {
@@ -37,10 +34,6 @@ export class ShardManager {
     return entry.pool;
   }
 
-  /**
-   * Routes a customerId to its designated shard and returns the corresponding Pool.
-   * @param customerId - Customer identifier (shard key)
-   */
   public getPoolForCustomer(customerId: string): {
     shardId: number;
     pool: pg.Pool;
@@ -55,7 +48,7 @@ export class ShardManager {
   }
 
   public async testAllConnections(): Promise<ShardConnectionStatus[]> {
-    console.log("Connecting to PostgreSQL shards...");
+    logger.info("Connecting to PostgreSQL shards...");
 
     const statuses: ShardConnectionStatus[] = [];
     const shardEntries = this.getAllShardEntries();
@@ -66,8 +59,14 @@ export class ShardManager {
         const client = await pool.connect();
         try {
           await client.query("SELECT 1");
-          console.log(
-            `Shard ${shardId}: Connected (${config.host}:${config.port}/${config.database})`,
+          logger.info(
+            {
+              shardId,
+              host: config.host,
+              port: config.port,
+              database: config.database,
+            },
+            `Shard ${shardId}: Connected`,
           );
           statuses.push({
             shardId,
@@ -81,8 +80,15 @@ export class ShardManager {
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error(
-          `Shard ${shardId}: Connection Failed (${config.host}:${config.port}/${config.database}) - ${errorMessage}`,
+        logger.error(
+          {
+            shardId,
+            host: config.host,
+            port: config.port,
+            database: config.database,
+            err,
+          },
+          `Shard ${shardId}: Connection Failed - ${errorMessage}`,
         );
         statuses.push({
           shardId,

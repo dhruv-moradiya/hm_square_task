@@ -16,9 +16,17 @@ export interface GcsConfig {
   projectId?: string | undefined;
 }
 
+export interface RetryConfig {
+  maxRetries: number;
+  baseDelayMs: number;
+}
+
 export interface AppConfig {
   port: number;
+  nodeEnv: string;
+  logLevel: string;
   batchSize: number;
+  retry: RetryConfig;
   shards: ShardDbConfig[];
   gcs: GcsConfig;
 }
@@ -55,7 +63,13 @@ function getEnvString(key: string, defaultValue?: string): string {
 
 export const env: AppConfig = {
   port: getEnvNumber("PORT", 3000),
+  nodeEnv: process.env.NODE_ENV || "development",
+  logLevel: process.env.LOG_LEVEL || "info",
   batchSize: getEnvNumber("DB_BATCH_SIZE", 500),
+  retry: {
+    maxRetries: getEnvNumber("DB_MAX_RETRIES", 3),
+    baseDelayMs: getEnvNumber("DB_RETRY_BASE_DELAY_MS", 200),
+  },
   shards: [
     {
       id: 0,
@@ -87,4 +101,3 @@ export const env: AppConfig = {
     projectId: process.env.GCP_PROJECT_ID || undefined,
   },
 };
-
